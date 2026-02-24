@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useCost } from "@/context/CostContext";
 
 const allergyOptions = [
   "Milk",
@@ -45,6 +46,7 @@ const navLinks = [
 export default function Dashboard() {
  const pathname = usePathname();
  const router = useRouter();
+ const { factorCost, setFactorCost } = useCost();
  const [allergyOpen, setAllergyOpen] = useState(false);
  const [selectedAllergies, setSelectedAllergies] = useState<Record<string, string>>({});
  const [otherAllergy, setOtherAllergy] = useState("");
@@ -336,26 +338,36 @@ export default function Dashboard() {
            </svg>
          </button>
 
-         {lifestyleOpen && (
-           <div className="absolute top-full mt-1 left-0 w-56 bg-white border border-gray-300 rounded-md shadow-lg py-2">
-             {lifestyleOptions.map((item) => (
-               <label
-                 key={item}
-                 className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
-               >
-                 <input
-                   type="checkbox"
-                   checked={selectedLifestyle.includes(item)}
-                   onChange={() => toggle(item, setSelectedLifestyle)}
-                   className="rounded"
-                 />
-                 {item}
-               </label>
-             ))}
-           </div>
-         )}
-       </div>
-     </div>
+        {lifestyleOpen && (
+          <div className="absolute top-full mt-1 left-0 w-56 bg-white border border-gray-300 rounded-md shadow-lg py-2">
+            {lifestyleOptions.map((item) => (
+              <label
+                key={item}
+                className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedLifestyle.includes(item)}
+                  onChange={() => toggle(item, setSelectedLifestyle)}
+                  className="rounded"
+                />
+                {item}
+              </label>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <label className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer rounded-md border border-gray-300 hover:bg-gray-100 transition-colors select-none">
+        <input
+          type="checkbox"
+          checked={factorCost}
+          onChange={(e) => setFactorCost(e.target.checked)}
+          className="rounded"
+        />
+        Factor Cost
+      </label>
+    </div>
    </header>
  );
 }
