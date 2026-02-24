@@ -16,6 +16,8 @@ const allergyOptions = [
   "Sesame",
 ];
 
+const severityLevels = ["Anaphylaxis", "Hives", "Intolerance", "Minor"];
+
 const religiousOptions = [
   "Kosher",
   "Halal",
@@ -44,7 +46,7 @@ export default function Dashboard() {
  const pathname = usePathname();
  const router = useRouter();
  const [allergyOpen, setAllergyOpen] = useState(false);
- const [selectedAllergies, setSelectedAllergies] = useState<string[]>([]);
+ const [selectedAllergies, setSelectedAllergies] = useState<Record<string, string>>({});
  const [otherAllergy, setOtherAllergy] = useState("");
  const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -161,35 +163,79 @@ export default function Dashboard() {
            onClick={() => setAllergyOpen(!allergyOpen)}
            className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-md border bg-white text-gray-600 border-gray-300 hover:bg-gray-100 hover:text-gray-900 transition-colors"
          >
-           Allergies{selectedAllergies.length > 0 ? ` (${selectedAllergies.length})` : ""}
+           Allergies{Object.keys(selectedAllergies).length > 0 ? ` (${Object.keys(selectedAllergies).length})` : ""}
            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
              <polyline points="6 9 12 15 18 9" />
            </svg>
          </button>
 
          {allergyOpen && (
-           <div className="absolute top-full mt-1 right-0 w-56 bg-white border border-gray-300 rounded-md shadow-lg py-2">
+           <div className="absolute top-full mt-1 left-0 w-72 bg-white border border-gray-300 rounded-md shadow-lg py-2 max-h-[400px] overflow-y-auto">
              {allergyOptions.map((allergy) => (
-               <label
-                 key={allergy}
-                 className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
-               >
-                 <input
-                   type="checkbox"
-                   checked={selectedAllergies.includes(allergy)}
-                   onChange={() => toggle(allergy, setSelectedAllergies)}
-                   className="rounded"
-                 />
-                 {allergy}
-               </label>
+               <div key={allergy}>
+                 <label className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer">
+                   <input
+                     type="checkbox"
+                     checked={allergy in selectedAllergies}
+                     onChange={() => {
+                       setSelectedAllergies((prev) => {
+                         const next = { ...prev };
+                         if (allergy in next) {
+                           delete next[allergy];
+                         } else {
+                           next[allergy] = "Minor";
+                         }
+                         return next;
+                       });
+                     }}
+                     className="rounded"
+                   />
+                   {allergy}
+                 </label>
+                 {allergy in selectedAllergies && (
+                   <div className="flex gap-1 px-8 pb-1.5 flex-wrap">
+                     {severityLevels.map((level) => (
+                       <button
+                         key={level}
+                         type="button"
+                         onClick={() =>
+                           setSelectedAllergies((prev) => ({ ...prev, [allergy]: level }))
+                         }
+                         className={`px-2 py-0.5 text-xs rounded-full border transition-colors ${
+                           selectedAllergies[allergy] === level
+                             ? level === "Anaphylaxis"
+                               ? "bg-red-500 text-white border-red-500"
+                               : level === "Hives"
+                                 ? "bg-orange-400 text-white border-orange-400"
+                                 : level === "Intolerance"
+                                   ? "bg-yellow-400 text-gray-900 border-yellow-400"
+                                   : "bg-green-400 text-white border-green-400"
+                             : "bg-white text-gray-500 border-gray-300 hover:bg-gray-100"
+                         }`}
+                       >
+                         {level}
+                       </button>
+                     ))}
+                   </div>
+                 )}
+               </div>
              ))}
              <div className="border-t border-gray-200 mt-1 pt-1 px-3">
                <label className="flex items-center gap-2 py-1.5 text-sm text-gray-700">
                  <input
                    type="checkbox"
-                   checked={selectedAllergies.includes(otherAllergy) && otherAllergy !== ""}
+                   checked={otherAllergy !== "" && otherAllergy in selectedAllergies}
                    onChange={() => {
-                     if (otherAllergy) toggle(otherAllergy, setSelectedAllergies);
+                     if (!otherAllergy) return;
+                     setSelectedAllergies((prev) => {
+                       const next = { ...prev };
+                       if (otherAllergy in next) {
+                         delete next[otherAllergy];
+                       } else {
+                         next[otherAllergy] = "Minor";
+                       }
+                       return next;
+                     });
                    }}
                    className="rounded"
                  />
@@ -203,14 +249,44 @@ export default function Dashboard() {
                    const prev = otherAllergy;
                    const next = e.target.value;
                    setOtherAllergy(next);
-                   if (prev && selectedAllergies.includes(prev)) {
-                     setSelectedAllergies((s) =>
-                       next ? s.map((a) => (a === prev ? next : a)) : s.filter((a) => a !== prev)
-                     );
+                   if (prev && prev in selectedAllergies) {
+                     setSelectedAllergies((s) => {
+                       const updated = { ...s };
+                       const severity = updated[prev];
+                       delete updated[prev];
+                       if (next) updated[next] = severity;
+                       return updated;
+                     });
                    }
                  }}
                  className="w-full mt-1 mb-1 px-2 py-1 text-sm border border-gray-300 rounded outline-none focus:border-blue-500"
                />
+               {otherAllergy !== "" && otherAllergy in selectedAllergies && (
+                 <div className="flex gap-1 pb-1.5 flex-wrap">
+                   {severityLevels.map((level) => (
+                     <button
+                       key={level}
+                       type="button"
+                       onClick={() =>
+                         setSelectedAllergies((prev) => ({ ...prev, [otherAllergy]: level }))
+                       }
+                       className={`px-2 py-0.5 text-xs rounded-full border transition-colors ${
+                         selectedAllergies[otherAllergy] === level
+                           ? level === "Anaphylaxis"
+                             ? "bg-red-500 text-white border-red-500"
+                             : level === "Hives"
+                               ? "bg-orange-400 text-white border-orange-400"
+                               : level === "Intolerance"
+                                 ? "bg-yellow-400 text-gray-900 border-yellow-400"
+                                 : "bg-green-400 text-white border-green-400"
+                           : "bg-white text-gray-500 border-gray-300 hover:bg-gray-100"
+                       }`}
+                     >
+                       {level}
+                     </button>
+                   ))}
+                 </div>
+               )}
              </div>
            </div>
          )}
