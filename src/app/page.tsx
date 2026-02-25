@@ -1,8 +1,12 @@
 "use client";
 
-import { Suspense, useEffect, useRef } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { getScoreForRegion } from "@/data/readiness-score";
+import {
+  getScoreForRegion,
+  getScoreBreakdown,
+  type ScoreBreakdown,
+} from "@/data/readiness-score";
 import { useCost } from "@/context/CostContext";
 
 const countryToRegion: Record<string, string> = {
@@ -67,6 +71,89 @@ function riskLabel(riskLevel: string): string {
   return "High Risk";
 }
 
+function subScoreBar(score: number, weight: number, color: string) {
+  const weighted = Math.round(score * weight * 10) / 10;
+  const pct = Math.max(0, Math.min(100, score));
+  return `
+    <div style="margin-bottom:12px;">
+      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;">
+        <span style="color:#6b7280;">${Math.round(weight * 100)}% weight</span>
+        <span style="font-weight:600;">${score.toFixed(1)}/100 <span style="color:#9ca3af;">(+${weighted.toFixed(1)} pts)</span></span>
+      </div>
+      <div style="height:8px;background:#e5e7eb;border-radius:4px;overflow:hidden;">
+        <div style="height:100%;width:${pct}%;background:${color};border-radius:4px;"></div>
+      </div>
+    </div>
+  `;
+}
+
+function buildDetailsHtml(bd: ScoreBreakdown, country: string): string {
+  const color = scoreToColor(bd.overall.riskLevel);
+  const label = riskLabel(bd.overall.riskLevel);
+
+  let html = `
+    <div style="font-family:system-ui,sans-serif;padding:4px 0;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+        <div>
+          <div style="font-weight:700;font-size:18px;">${country}</div>
+          <div style="font-size:13px;color:#6b7280;">${bd.region}</div>
+        </div>
+        <div style="text-align:right;">
+          <div style="font-size:28px;font-weight:800;color:${color};">${bd.overall.score.toFixed(1)}</div>
+          <div style="font-size:11px;color:#9ca3af;">out of 100</div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:20px;padding:8px 12px;border-radius:8px;background:${color}15;">
+        <div style="width:12px;height:12px;border-radius:50%;background:${color};flex-shrink:0;"></div>
+        <span style="font-weight:600;font-size:14px;color:${color};">${label}</span>
+      </div>
+
+      <div style="font-weight:600;font-size:14px;margin-bottom:8px;">Anaphylaxis Severity</div>
+      ${subScoreBar(bd.anaphylaxis.score, bd.anaphylaxis.weight, "#6366f1")}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;font-size:12px;margin-bottom:20px;">
+        <div style="color:#6b7280;">Severe anaphylaxis</div><div style="font-weight:500;">${bd.anaphylaxis.severeAnaphylaxisPct}%</div>
+        <div style="color:#6b7280;">Adrenaline users</div><div style="font-weight:500;">${bd.anaphylaxis.adrenalineUsersPct}%</div>
+        <div style="color:#6b7280;">3+ adrenaline doses</div><div style="font-weight:500;">${bd.anaphylaxis.threeOrMoreAdrenalinePct}%</div>
+      </div>
+
+      <div style="font-weight:600;font-size:14px;margin-bottom:8px;">Management Quality</div>
+      ${subScoreBar(bd.management.score, bd.management.weight, "#f59e0b")}
+      <div style="font-size:12px;margin-bottom:6px;color:#6b7280;">Average failure rate: <span style="font-weight:500;color:#374151;">${bd.management.averageFailure}%</span></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;font-size:12px;margin-bottom:20px;">
+        <div style="color:#6b7280;">Avoid trigger</div><div style="font-weight:500;">${bd.management.avoidTriggerPct}% fail</div>
+        <div style="color:#6b7280;">Define allergen</div><div style="font-weight:500;">${bd.management.defineTriggerPct}% fail</div>
+        <div style="color:#6b7280;">Educate patient</div><div style="font-weight:500;">${bd.management.educatePatientPct}% fail</div>
+        <div style="color:#6b7280;">Prepared to manage</div><div style="font-weight:500;">${bd.management.preparedToManagePct}% fail</div>
+        <div style="color:#6b7280;">Properly treat</div><div style="font-weight:500;">${bd.management.properlyTreatPct}% fail</div>
+      </div>
+  `;
+
+  if (bd.cost) {
+    html += `
+      <div style="font-weight:600;font-size:14px;margin-bottom:8px;">Healthcare Cost</div>
+      ${subScoreBar(bd.cost.score, bd.cost.weight, "#ef4444")}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;font-size:12px;margin-bottom:12px;">
+        <div style="color:#6b7280;">Total service cost</div><div style="font-weight:500;">$${bd.cost.totalCost.toLocaleString()}</div>
+        <div style="color:#6b7280;">Relative cost</div><div style="font-weight:500;">${bd.cost.normalizedCost}% of max</div>
+      </div>
+    `;
+  }
+
+  html += `</div>`;
+  return html;
+}
+
+interface DetailsState {
+  html: string;
+  side: "left" | "right";
+}
+
+declare global {
+  interface Window {
+    __showScoreDetails?: () => void;
+  }
+}
+
 function MapContent() {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<L.Map | null>(null);
@@ -74,10 +161,36 @@ function MapContent() {
   const query = searchParams.get("q");
   const { factorCost } = useCost();
   const factorCostRef = useRef(factorCost);
+  const [details, setDetails] = useState<DetailsState | null>(null);
+  const pendingDetailsRef = useRef<{ region: string; country: string; clickX: number } | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     factorCostRef.current = factorCost;
   }, [factorCost]);
+
+  const showDetails = useCallback(() => {
+    const pending = pendingDetailsRef.current;
+    if (!pending) return;
+    const bd = getScoreBreakdown(pending.region, factorCostRef.current);
+    if (!bd) return;
+    const html = buildDetailsHtml(bd, pending.country);
+    const side = pending.clickX < window.innerWidth / 2 ? "right" : "left";
+    setDetails({ html, side });
+  }, []);
+
+  useEffect(() => {
+    window.__showScoreDetails = showDetails;
+    return () => { window.__showScoreDetails = undefined; };
+  }, [showDetails]);
+
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setDetails(null);
+    };
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, []);
 
   useEffect(() => {
     if (!mapRef.current || mapInstance.current) return;
@@ -97,6 +210,9 @@ function MapContent() {
 
       mapInstance.current.on("click", (e: L.LeafletMouseEvent) => {
         const { lat, lng } = e.latlng;
+        const clickX = (e.originalEvent as MouseEvent).clientX;
+
+        setDetails(null);
 
         fetch(
           `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&zoom=3`,
@@ -116,6 +232,10 @@ function MapContent() {
               ? getScoreForRegion(region, factorCostRef.current)
               : undefined;
 
+            pendingDetailsRef.current = region
+              ? { region, country, clickX }
+              : null;
+
             let popupHtml: string;
 
             if (regionScore) {
@@ -132,6 +252,10 @@ function MapContent() {
                   </div>
                   <div style="font-size:24px;font-weight:700;color:${color};">${regionScore.score.toFixed(1)}<span style="font-size:14px;color:#9ca3af;">/100</span></div>
                   <div style="margin-top:6px;font-size:11px;color:#9ca3af;">Allergy Readiness Score</div>
+                  <a href="#" onclick="window.__showScoreDetails?.(); return false;"
+                     style="display:inline-block;margin-top:10px;font-size:12px;color:#3b82f6;text-decoration:none;font-weight:500;">
+                    View details &rarr;
+                  </a>
                 </div>
               `;
             } else {
@@ -174,12 +298,43 @@ function MapContent() {
   }, [query]);
 
   return (
-    <div className="flex-1 flex justify-center items-center p-6">
+    <div className="flex-1 flex justify-center items-center p-6 relative">
       <div
         ref={mapRef}
         id="heat-map-container"
         className="w-full max-w-[1000px] min-h-[500px] rounded-lg"
       />
+
+      {details && (
+        <>
+          <div
+            className="fixed inset-0 z-[1100]"
+            onClick={() => setDetails(null)}
+          />
+          <div
+            ref={panelRef}
+            className={`fixed top-0 z-[1200] h-full w-[380px] bg-white shadow-2xl border-gray-200 overflow-y-auto transition-all ${
+              details.side === "right"
+                ? "right-0 border-l"
+                : "left-0 border-r"
+            }`}
+          >
+            <div className="sticky top-0 bg-white z-10 flex items-center justify-between px-5 py-4 border-b border-gray-200">
+              <span className="font-semibold text-gray-900 text-sm">Score Breakdown</span>
+              <button
+                onClick={() => setDetails(null)}
+                className="text-gray-400 hover:text-gray-700 transition-colors text-lg leading-none"
+              >
+                &times;
+              </button>
+            </div>
+            <div
+              className="px-5 py-4"
+              dangerouslySetInnerHTML={{ __html: details.html }}
+            />
+          </div>
+        </>
+      )}
     </div>
   );
 }
