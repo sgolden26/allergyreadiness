@@ -132,9 +132,32 @@ function buildDetailsHtml(bd: ScoreBreakdown, country: string): string {
     html += `
       <div style="font-weight:600;font-size:14px;margin-bottom:8px;">Healthcare Cost</div>
       ${subScoreBar(bd.cost.score, bd.cost.weight, "#ef4444")}
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;font-size:12px;margin-bottom:12px;">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;font-size:12px;margin-bottom:20px;">
         <div style="color:#6b7280;">Total service cost</div><div style="font-weight:500;">$${bd.cost.totalCost.toLocaleString()}</div>
         <div style="color:#6b7280;">Relative cost</div><div style="font-weight:500;">${bd.cost.normalizedCost}% of max</div>
+      </div>
+    `;
+  }
+
+  if (bd.codex) {
+    const memberColor = bd.codex.isMember ? "#22c55e" : "#ef4444";
+    const memberLabel = bd.codex.isMember ? "Yes" : "No";
+    const bonusText = bd.codex.bonus > 0
+      ? `<div style="font-size:12px;color:#22c55e;margin-top:4px;">+${bd.codex.bonus} point bonus applied</div>`
+      : `<div style="font-size:12px;color:#9ca3af;margin-top:4px;">No labeling bonus applied</div>`;
+
+    html += `
+      <div style="font-weight:600;font-size:14px;margin-bottom:8px;">Codex Alimentarius</div>
+      <div style="padding:10px 12px;border-radius:8px;border:1px solid #e5e7eb;margin-bottom:12px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <div style="font-size:12px;color:#6b7280;">Member country</div>
+          <div style="font-weight:600;font-size:13px;color:${memberColor};">${memberLabel}</div>
+        </div>
+        ${bd.codex.isMember
+          ? `<div style="font-size:11px;color:#6b7280;margin-top:6px;">This country follows international food labeling standards, requiring allergen ingredients to be listed on packaged foods.</div>`
+          : `<div style="font-size:11px;color:#6b7280;margin-top:6px;">This country is not a Codex member. Packaged food may not reliably list allergen ingredients.</div>`
+        }
+        ${bonusText}
       </div>
     `;
   }
@@ -172,7 +195,7 @@ function MapContent() {
   const showDetails = useCallback(() => {
     const pending = pendingDetailsRef.current;
     if (!pending) return;
-    const bd = getScoreBreakdown(pending.region, factorCostRef.current);
+    const bd = getScoreBreakdown(pending.region, factorCostRef.current, pending.country);
     if (!bd) return;
     const html = buildDetailsHtml(bd, pending.country);
     const side = pending.clickX < window.innerWidth / 2 ? "right" : "left";
@@ -229,7 +252,7 @@ function MapContent() {
 
             const region = countryToRegion[country];
             const regionScore = region
-              ? getScoreForRegion(region, factorCostRef.current)
+              ? getScoreForRegion(region, factorCostRef.current, country)
               : undefined;
 
             pendingDetailsRef.current = region

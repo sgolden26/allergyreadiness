@@ -1,6 +1,7 @@
 import { anaphylaxisPrevalence, type AnaphylaxisData } from "./anaphylaxis-prevalence";
 import { managementFailure, getAverageFailure, type ManagementFailureData } from "./management-failure";
 import { getNormalizedCost, healthcareCost } from "./healthcare-cost";
+import { isCodexMember } from "./codex-alimentarius";
 
 export interface RegionScore {
   region: string;
@@ -34,6 +35,10 @@ export interface ScoreBreakdown {
     totalCost: number;
     normalizedCost: number;
   };
+  codex?: {
+    isMember: boolean;
+    bonus: number;
+  };
 }
 
 const failureLookup: Record<string, number> = {};
@@ -45,6 +50,7 @@ for (const data of managementFailure) {
 
 const THREE_PLUS_WEIGHT = 2;
 const MAX_ANAPHYLAXIS_RISK = 70;
+const CODEX_BONUS = 15;
 
 function computeComponents(data: AnaphylaxisData, factorCost: boolean) {
   const anaphylaxisRisk =
@@ -108,16 +114,24 @@ export function getRegionScores(factorCost = false): RegionScore[] {
 
 export function getScoreForRegion(
   region: string,
-  factorCost = false
+  factorCost = false,
+  country?: string
 ): RegionScore | undefined {
-  return getRegionScores(factorCost).find(
+  const base = getRegionScores(factorCost).find(
     (r) => r.region.toLowerCase() === region.toLowerCase()
   );
+  if (!base) return undefined;
+  if (country && isCodexMember(country)) {
+    const boosted = Math.min(100, base.score + CODEX_BONUS);
+    return { ...base, score: Math.round(boosted * 10) / 10, riskLevel: getRiskLevel(boosted) };
+  }
+  return base;
 }
 
 export function getScoreBreakdown(
   region: string,
-  factorCost = false
+  factorCost = false,
+  country?: string
 ): ScoreBreakdown | undefined {
   const anaData = anaphylaxisPrevalence.find(
     (d) => d.region.toLowerCase() === region.toLowerCase()
@@ -125,7 +139,10 @@ export function getScoreBreakdown(
   if (!anaData) return undefined;
 
   const comp = computeComponents(anaData, factorCost);
-  const score = Math.round(comp.combined * 10) / 10;
+  const isMember = country ? isCodexMember(country) : false;
+  const bonus = isMember ? CODEX_BONUS : 0;
+  const finalScore = Math.min(100, comp.combined + bonus);
+  const score = Math.round(finalScore * 10) / 10;
   const mgmt = failureDataLookup[anaData.region];
 
   const breakdown: ScoreBreakdown = {
@@ -160,6 +177,10 @@ export function getScoreBreakdown(
       totalCost: costEntry?.totalCost ?? 0,
       normalizedCost: Math.round((comp.normalizedCost as number) * 10) / 10,
     };
+  }
+
+  if (country) {
+    breakdown.codex = { isMember, bonus };
   }
 
   return breakdown;
