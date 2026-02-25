@@ -142,24 +142,63 @@ function buildDetailsHtml(bd: ScoreBreakdown, country: string): string {
   if (bd.codex) {
     const memberColor = bd.codex.isMember ? "#22c55e" : "#ef4444";
     const memberLabel = bd.codex.isMember ? "Yes" : "No";
-    const bonusText = bd.codex.bonus > 0
-      ? `<div style="font-size:12px;color:#22c55e;margin-top:4px;">+${bd.codex.bonus} point bonus applied</div>`
-      : `<div style="font-size:12px;color:#9ca3af;margin-top:4px;">No labeling bonus applied</div>`;
+    const bonusColor = bd.codex.bonus >= 0 ? "#22c55e" : "#ef4444";
+    const bonusSign = bd.codex.bonus >= 0 ? "+" : "";
+    const bonusText = bd.codex.bonus !== 0
+      ? `<div style="font-size:12px;font-weight:600;color:${bonusColor};margin-top:4px;">${bonusSign}${bd.codex.bonus} pts</div>`
+      : `<div style="font-size:12px;color:#9ca3af;margin-top:4px;">No adjustment applied</div>`;
 
     html += `
-      <div style="font-weight:600;font-size:14px;margin-bottom:8px;">Codex Alimentarius</div>
+      <div style="font-weight:600;font-size:14px;margin-bottom:8px;">Food Labeling</div>
       <div style="padding:10px 12px;border-radius:8px;border:1px solid #e5e7eb;margin-bottom:12px;">
+        <div style="font-size:12px;font-weight:600;color:#374151;margin-bottom:6px;">Codex Alimentarius</div>
         <div style="display:flex;align-items:center;justify-content:space-between;">
           <div style="font-size:12px;color:#6b7280;">Member country</div>
           <div style="font-weight:600;font-size:13px;color:${memberColor};">${memberLabel}</div>
         </div>
         ${bd.codex.isMember
-          ? `<div style="font-size:11px;color:#6b7280;margin-top:6px;">This country follows international food labeling standards, requiring allergen ingredients to be listed on packaged foods.</div>`
+          ? `<div style="font-size:11px;color:#6b7280;margin-top:6px;">This country follows international food labeling standards.</div>`
           : `<div style="font-size:11px;color:#6b7280;margin-top:6px;">This country is not a Codex member. Packaged food may not reliably list allergen ingredients.</div>`
         }
-        ${bonusText}
-      </div>
     `;
+
+    if (bd.labeling) {
+      const rateColor = bd.labeling.effectiveRate >= 95 ? "#22c55e"
+        : bd.labeling.effectiveRate >= 70 ? "#fbbf24" : "#ef4444";
+
+      html += `
+        <div style="border-top:1px solid #e5e7eb;margin-top:10px;padding-top:10px;">
+          <div style="font-size:12px;font-weight:600;color:#374151;margin-bottom:8px;">Labeling Compliance Data</div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+            <div style="font-size:12px;color:#6b7280;">Effective labeling rate</div>
+            <div style="font-weight:700;font-size:16px;color:${rateColor};">${bd.labeling.effectiveRate}%</div>
+          </div>
+          <div style="height:8px;background:#e5e7eb;border-radius:4px;overflow:hidden;margin-bottom:4px;">
+            <div style="height:100%;width:${bd.labeling.effectiveRate}%;background:${rateColor};border-radius:4px;"></div>
+          </div>
+          <div style="font-size:11px;color:#9ca3af;margin-bottom:8px;">Threshold: 95%. Below = penalty.</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px 16px;font-size:12px;">
+            <div style="color:#6b7280;">Has allergen label</div><div style="font-weight:500;">${bd.labeling.foodAllergenLabelingPct}%</div>
+            <div style="color:#6b7280;">Of those, compliant</div><div style="font-weight:500;">${bd.labeling.compliancePct}%</div>
+            <div style="color:#6b7280;">Non-compliant</div><div style="font-weight:500;">${bd.labeling.nonCompliancePct}%</div>
+            <div style="color:#6b7280;">No allergen label</div><div style="font-weight:500;color:#ef4444;">${bd.labeling.noLabelingPct}%</div>
+          </div>
+        </div>
+      `;
+    }
+
+    if (!bd.labeling) {
+      html += `
+        <div style="border-top:1px solid #e5e7eb;margin-top:10px;padding-top:8px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <div style="font-size:12px;color:#6b7280;">Food labeling compliance</div>
+            <div style="font-weight:600;font-size:13px;color:#9ca3af;">N/A</div>
+          </div>
+        </div>
+      `;
+    }
+
+    html += `</div>`;
   }
 
   html += `</div>`;
