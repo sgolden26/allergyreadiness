@@ -3,6 +3,7 @@ import { managementFailure, getAverageFailure, type ManagementFailureData } from
 import { getNormalizedCost, healthcareCost } from "./healthcare-cost";
 import { isCodexMember } from "./codex-alimentarius";
 import { getLabelingCompliance, type LabelingComplianceData } from "./labeling-compliance-latam";
+import { getAllergenCoverage } from "./allergen-regulations";
 
 export interface RegionScore {
   region: string;
@@ -48,6 +49,13 @@ export interface ScoreBreakdown {
     nonCompliancePct: number;
     noLabelingPct: number;
   };
+  allergenRegulation?: {
+    covered: string[];
+    notCovered: string[];
+    coverageRatio: number;
+    bonus: number;
+    hasSelections: boolean;
+  };
 }
 
 const failureLookup: Record<string, number> = {};
@@ -65,6 +73,8 @@ const CODEX_BONUS = 15;
 // effectiveRate = foodAllergenLabelingPct × compliancePct / 100
 const LABELING_THRESHOLD = 95;
 const LABELING_PENALTY_MULTIPLIER = 0.5;
+const ALLERGEN_REGULATION_MAX_BONUS = 10;
+const UNREGULATED_ALLERGEN_PENALTY = 3;
 
 function computeLabelingBonus(country: string): {
   bonus: number;
@@ -85,10 +95,11 @@ function computeLabelingBonus(country: string): {
     const penalty = -(deficit * LABELING_PENALTY_MULTIPLIER);
     return { bonus: Math.round(penalty * 10) / 10, labeling, effectiveRate: rounded };
   }
-  if (isCodexMember(country)) {
-    return { bonus: CODEX_BONUS, labeling: undefined, effectiveRate: 0 };
-  }
-  return { bonus: 0, labeling: undefined, effectiveRate: 0 };
+  // No specific compliance data: assume 70% effective rate
+  const assumedRate = 70;
+  const deficit = LABELING_THRESHOLD - assumedRate;
+  const penalty = -(deficit * LABELING_PENALTY_MULTIPLIER);
+  return { bonus: Math.round(penalty * 10) / 10, labeling: undefined, effectiveRate: assumedRate };
 }
 
 function computeComponents(data: AnaphylaxisData, factorCost: boolean) {
@@ -154,18 +165,26 @@ export function getRegionScores(factorCost = false): RegionScore[] {
 export function getScoreForRegion(
   region: string,
   factorCost = false,
-  country?: string
+  country?: string,
+  selectedAllergens: string[] = []
 ): RegionScore | undefined {
   const base = getRegionScores(factorCost).find(
     (r) => r.region.toLowerCase() === region.toLowerCase()
   );
   if (!base) return undefined;
+  let totalBonus = 0;
   if (country) {
     const { bonus } = computeLabelingBonus(country);
-    if (bonus !== 0) {
-      const adjusted = Math.max(0, Math.min(100, base.score + bonus));
-      return { ...base, score: Math.round(adjusted * 10) / 10, riskLevel: getRiskLevel(adjusted) };
+    totalBonus += bonus;
+    if (selectedAllergens.length > 0) {
+      const { coverageRatio, notCovered } = getAllergenCoverage(country, selectedAllergens);
+      totalBonus += coverageRatio * ALLERGEN_REGULATION_MAX_BONUS;
+      totalBonus -= notCovered.length * UNREGULATED_ALLERGEN_PENALTY;
     }
+  }
+  if (totalBonus !== 0) {
+    const adjusted = Math.max(0, Math.min(100, base.score + totalBonus));
+    return { ...base, score: Math.round(adjusted * 10) / 10, riskLevel: getRiskLevel(adjusted) };
   }
   return base;
 }
@@ -173,7 +192,8 @@ export function getScoreForRegion(
 export function getScoreBreakdown(
   region: string,
   factorCost = false,
-  country?: string
+  country?: string,
+  selectedAllergens: string[] = []
 ): ScoreBreakdown | undefined {
   const anaData = anaphylaxisPrevalence.find(
     (d) => d.region.toLowerCase() === region.toLowerCase()
@@ -183,8 +203,17 @@ export function getScoreBreakdown(
   const comp = computeComponents(anaData, factorCost);
   const isMember = country ? isCodexMember(country) : false;
   const labelInfo = country ? computeLabelingBonus(country) : { bonus: 0, labeling: undefined, effectiveRate: 0 };
-  const bonus = labelInfo.bonus;
-  const finalScore = Math.max(0, Math.min(100, comp.combined + bonus));
+  let totalBonus = labelInfo.bonus;
+
+  const coverage = country && selectedAllergens.length > 0
+    ? getAllergenCoverage(country, selectedAllergens)
+    : null;
+  const allergenBonus = coverage
+    ? Math.round((coverage.coverageRatio * ALLERGEN_REGULATION_MAX_BONUS - coverage.notCovered.length * UNREGULATED_ALLERGEN_PENALTY) * 10) / 10
+    : 0;
+  totalBonus += allergenBonus;
+
+  const finalScore = Math.max(0, Math.min(100, comp.combined + totalBonus));
   const score = Math.round(finalScore * 10) / 10;
   const mgmt = failureDataLookup[anaData.region];
 
@@ -223,7 +252,7 @@ export function getScoreBreakdown(
   }
 
   if (country) {
-    breakdown.codex = { isMember, bonus };
+    breakdown.codex = { isMember, bonus: labelInfo.bonus };
     if (labelInfo.labeling) {
       breakdown.labeling = {
         hasData: true,
@@ -234,6 +263,13 @@ export function getScoreBreakdown(
         noLabelingPct: labelInfo.labeling.noLabelingPct,
       };
     }
+    breakdown.allergenRegulation = {
+      covered: coverage?.covered ?? [],
+      notCovered: coverage?.notCovered ?? [],
+      coverageRatio: coverage?.coverageRatio ?? 0,
+      bonus: allergenBonus,
+      hasSelections: selectedAllergens.length > 0,
+    };
   }
 
   return breakdown;

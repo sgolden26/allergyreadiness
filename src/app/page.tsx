@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   getScoreForRegion,
@@ -8,6 +8,7 @@ import {
   type ScoreBreakdown,
 } from "@/data/readiness-score";
 import { useCost } from "@/context/CostContext";
+import { useAllergies } from "@/context/AllergyContext";
 
 const countryToRegion: Record<string, string> = {
   "United Arab Emirates": "Western Asia", "Armenia": "Western Asia", "Azerbaijan": "Western Asia",
@@ -139,6 +140,47 @@ function buildDetailsHtml(bd: ScoreBreakdown, country: string): string {
     `;
   }
 
+  if (bd.allergenRegulation) {
+    html += `<div style="font-weight:600;font-size:14px;margin-bottom:8px;">Your Allergen Regulations</div>`;
+
+    if (!bd.allergenRegulation.hasSelections) {
+      html += `
+        <div style="padding:10px 12px;border-radius:8px;border:1px solid #e5e7eb;margin-bottom:20px;font-size:12px;color:#9ca3af;">
+          Select allergens in the dashboard to see which ones this country requires on food labels.
+        </div>
+      `;
+    } else {
+      const { covered, notCovered, bonus } = bd.allergenRegulation;
+      const bonusColor = bonus > 0 ? "#22c55e" : "#9ca3af";
+
+      let items = "";
+      for (const a of covered) {
+        items += `
+          <div style="display:flex;align-items:center;gap:6px;padding:4px 0;">
+            <span style="color:#22c55e;font-size:14px;">&#10003;</span>
+            <span style="font-size:12px;">${a}</span>
+          </div>`;
+      }
+      for (const a of notCovered) {
+        items += `
+          <div style="display:flex;align-items:center;gap:6px;padding:4px 0;">
+            <span style="color:#ef4444;font-size:14px;">&#10007;</span>
+            <span style="font-size:12px;color:#9ca3af;">${a}</span>
+          </div>`;
+      }
+
+      html += `
+        <div style="padding:10px 12px;border-radius:8px;border:1px solid #e5e7eb;margin-bottom:20px;">
+          ${items}
+          <div style="border-top:1px solid #e5e7eb;margin-top:6px;padding-top:6px;display:flex;align-items:center;justify-content:space-between;">
+            <div style="font-size:12px;color:#6b7280;">${covered.length}/${covered.length + notCovered.length} regulated</div>
+            <div style="font-size:12px;font-weight:600;color:${bonusColor};">+${bonus} pts</div>
+          </div>
+        </div>
+      `;
+    }
+  }
+
   if (bd.codex) {
     const memberColor = bd.codex.isMember ? "#22c55e" : "#ef4444";
     const memberLabel = bd.codex.isMember ? "Yes" : "No";
@@ -223,6 +265,8 @@ function MapContent() {
   const query = searchParams.get("q");
   const { factorCost } = useCost();
   const factorCostRef = useRef(factorCost);
+  const { selectedAllergies } = useAllergies();
+  const selectedAllergiesRef = useRef(selectedAllergies);
   const [details, setDetails] = useState<DetailsState | null>(null);
   const pendingDetailsRef = useRef<{ region: string; country: string; clickX: number } | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -231,10 +275,15 @@ function MapContent() {
     factorCostRef.current = factorCost;
   }, [factorCost]);
 
+  useEffect(() => {
+    selectedAllergiesRef.current = selectedAllergies;
+  }, [selectedAllergies]);
+
   const showDetails = useCallback(() => {
     const pending = pendingDetailsRef.current;
     if (!pending) return;
-    const bd = getScoreBreakdown(pending.region, factorCostRef.current, pending.country);
+    const allergenNames = Object.keys(selectedAllergiesRef.current);
+    const bd = getScoreBreakdown(pending.region, factorCostRef.current, pending.country, allergenNames);
     if (!bd) return;
     const html = buildDetailsHtml(bd, pending.country);
     const side = pending.clickX < window.innerWidth / 2 ? "right" : "left";
@@ -290,8 +339,9 @@ function MapContent() {
               "";
 
             const region = countryToRegion[country];
+            const allergenNames = Object.keys(selectedAllergiesRef.current);
             const regionScore = region
-              ? getScoreForRegion(region, factorCostRef.current, country)
+              ? getScoreForRegion(region, factorCostRef.current, country, allergenNames)
               : undefined;
 
             pendingDetailsRef.current = region
@@ -359,13 +409,121 @@ function MapContent() {
       });
   }, [query]);
 
+  const allergenNames = useMemo(
+    () => Object.keys(selectedAllergies),
+    [selectedAllergies]
+  );
+
+  const top5 = useMemo(() => {
+    const countries = [
+      "United States", "Canada", "Mexico", "Brazil", "Argentina", "Chile",
+      "Colombia", "Ecuador", "Peru", "Venezuela", "Panama", "Costa Rica",
+      "El Salvador", "Guatemala",
+      "United Kingdom", "France", "Germany", "Spain", "Italy", "Netherlands",
+      "Sweden", "Norway", "Denmark", "Finland", "Iceland", "Ireland",
+      "Switzerland", "Belgium", "Poland", "Czech Republic", "Greece",
+      "Portugal", "Austria", "Romania", "Hungary", "Croatia", "Serbia",
+      "Bulgaria", "Slovakia", "Slovenia", "Ukraine", "Belarus", "Russia",
+      "Turkey", "Israel", "Saudi Arabia", "United Arab Emirates", "Qatar",
+      "Kuwait", "Jordan", "Egypt", "Morocco", "Tunisia",
+      "South Africa", "Nigeria", "Kenya",
+      "China", "Japan", "South Korea", "India", "Thailand", "Vietnam",
+      "Indonesia", "Philippines", "Malaysia", "Singapore", "Bangladesh",
+      "Pakistan", "Sri Lanka", "Taiwan",
+      "Australia", "New Zealand", "Fiji",
+    ];
+
+    const scored: { country: string; score: number; riskLevel: string; region: string }[] = [];
+
+    for (const country of countries) {
+      const region = countryToRegion[country];
+      if (!region) continue;
+      const result = getScoreForRegion(region, factorCost, country, allergenNames);
+      if (result) {
+        scored.push({
+          country,
+          score: result.score,
+          riskLevel: result.riskLevel,
+          region: result.region,
+        });
+      }
+    }
+
+    scored.sort((a, b) => b.score - a.score);
+
+    const seen = new Set<string>();
+    const unique: typeof scored = [];
+    for (const s of scored) {
+      const key = `${s.region}-${s.score}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        unique.push(s);
+      }
+      if (unique.length >= 5) break;
+    }
+
+    return unique;
+  }, [factorCost, allergenNames]);
+
   return (
-    <div className="flex-1 flex justify-center items-center p-6 relative">
+    <div className="flex-1 flex flex-col items-center p-6 relative">
       <div
         ref={mapRef}
         id="heat-map-container"
         className="w-full max-w-[1000px] min-h-[500px] rounded-lg"
       />
+
+      <div className="w-full max-w-[1000px] mt-6">
+        <h2 className="text-sm font-semibold text-gray-900 mb-3">
+          Top 5 Safest Countries
+          {allergenNames.length > 0 && (
+            <span className="text-gray-400 font-normal ml-1">
+              for your allergens
+            </span>
+          )}
+        </h2>
+        <div className="rounded-lg border border-gray-200 overflow-hidden bg-white">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-gray-50 text-left text-xs text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-2.5 font-medium">#</th>
+                <th className="px-4 py-2.5 font-medium">Country</th>
+                <th className="px-4 py-2.5 font-medium">Region</th>
+                <th className="px-4 py-2.5 font-medium text-right">Score</th>
+                <th className="px-4 py-2.5 font-medium text-right">Risk</th>
+              </tr>
+            </thead>
+            <tbody>
+              {top5.map((entry, i) => (
+                <tr
+                  key={entry.country}
+                  className={i % 2 === 0 ? "bg-white" : "bg-gray-50"}
+                >
+                  <td className="px-4 py-2.5 text-gray-400 font-medium">{i + 1}</td>
+                  <td className="px-4 py-2.5 font-medium text-gray-900">{entry.country}</td>
+                  <td className="px-4 py-2.5 text-gray-500">{entry.region}</td>
+                  <td className="px-4 py-2.5 text-right font-semibold" style={{
+                    color: entry.riskLevel === "low" ? "#22c55e" : entry.riskLevel === "moderate" ? "#f59e0b" : "#ef4444"
+                  }}>
+                    {entry.score.toFixed(1)}
+                  </td>
+                  <td className="px-4 py-2.5 text-right">
+                    <span className={`inline-block px-2 py-0.5 text-xs font-medium rounded-full ${
+                      entry.riskLevel === "low"
+                        ? "bg-green-100 text-green-700"
+                        : entry.riskLevel === "moderate"
+                          ? "bg-yellow-100 text-yellow-700"
+                          : "bg-red-100 text-red-700"
+                    }`}>
+                      {entry.riskLevel === "low" ? "Low" : entry.riskLevel === "moderate" ? "Moderate" : "High"}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
       {details && (
         <>

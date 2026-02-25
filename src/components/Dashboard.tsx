@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCost } from "@/context/CostContext";
+import { useAllergies } from "@/context/AllergyContext";
 
 const allergyOptions = [
   "Milk",
@@ -47,8 +48,8 @@ export default function Dashboard() {
  const pathname = usePathname();
  const router = useRouter();
  const { factorCost, setFactorCost } = useCost();
+ const { selectedAllergies, setSelectedAllergies } = useAllergies();
  const [allergyOpen, setAllergyOpen] = useState(false);
- const [selectedAllergies, setSelectedAllergies] = useState<Record<string, string>>({});
  const [otherAllergy, setOtherAllergy] = useState("");
  const dropdownRef = useRef<HTMLDivElement>(null);
 

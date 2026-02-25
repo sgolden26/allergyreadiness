@@ -67,6 +67,15 @@ export const labelingComplianceLatAm: LabelingComplianceData[] = [
     noLabelingPct: 47.28,
     noLabelingButAllergensInIngredientsPct: 36.15,
   },
+  {
+    country: "United States",
+    sampleSize: 0,
+    foodAllergenLabelingPct: 100,
+    compliancePct: 100,
+    nonCompliancePct: 0,
+    noLabelingPct: 0,
+    noLabelingButAllergensInIngredientsPct: 0,
+  },
 ];
 
 export const labelingComplianceTotal: LabelingComplianceData = {
@@ -79,10 +88,20 @@ export const labelingComplianceTotal: LabelingComplianceData = {
   noLabelingButAllergensInIngredientsPct: 30.05,
 };
 
+const usAliases = new Set([
+  "united states",
+  "united states of america",
+  "usa",
+]);
+
 export function getLabelingCompliance(
   country: string
 ): LabelingComplianceData | undefined {
+  const lower = country.toLowerCase();
+  if (usAliases.has(lower)) {
+    return labelingComplianceLatAm.find((d) => d.country === "United States");
+  }
   return labelingComplianceLatAm.find(
-    (d) => d.country.toLowerCase() === country.toLowerCase()
+    (d) => d.country.toLowerCase() === lower
   );
 }
