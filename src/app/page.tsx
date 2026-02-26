@@ -109,14 +109,6 @@ function buildDetailsHtml(bd: ScoreBreakdown, country: string): string {
         <span style="font-weight:600;font-size:14px;color:${color};">${label}</span>
       </div>
 
-      <div style="font-weight:600;font-size:14px;margin-bottom:8px;">Anaphylaxis Severity</div>
-      ${subScoreBar(bd.anaphylaxis.score, bd.anaphylaxis.weight, "#6366f1")}
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;font-size:12px;margin-bottom:20px;">
-        <div style="color:#6b7280;">Severe anaphylaxis</div><div style="font-weight:500;">${bd.anaphylaxis.severeAnaphylaxisPct}%</div>
-        <div style="color:#6b7280;">Adrenaline users</div><div style="font-weight:500;">${bd.anaphylaxis.adrenalineUsersPct}%</div>
-        <div style="color:#6b7280;">3+ adrenaline doses</div><div style="font-weight:500;">${bd.anaphylaxis.threeOrMoreAdrenalinePct}%</div>
-      </div>
-
       <div style="font-weight:600;font-size:14px;margin-bottom:8px;">Management Quality</div>
       ${subScoreBar(bd.management.score, bd.management.weight, "#f59e0b")}
       <div style="font-size:12px;margin-bottom:6px;color:#6b7280;">Average failure rate: <span style="font-weight:500;color:#374151;">${bd.management.averageFailure}%</span></div>
@@ -128,6 +120,13 @@ function buildDetailsHtml(bd: ScoreBreakdown, country: string): string {
         <div style="color:#6b7280;">Properly treat</div><div style="font-weight:500;">${bd.management.properlyTreatPct}% fail</div>
       </div>
   `;
+
+  if (bd.labeling) {
+    html += `
+      <div style="font-weight:600;font-size:14px;margin-bottom:8px;">Food Labeling</div>
+      ${subScoreBar(bd.labeling.effectiveRate, bd.labeling.weight, "#10b981")}
+    `;
+  }
 
   if (bd.cost) {
     html += `
@@ -141,7 +140,10 @@ function buildDetailsHtml(bd: ScoreBreakdown, country: string): string {
   }
 
   if (bd.allergenRegulation) {
-    html += `<div style="font-weight:600;font-size:14px;margin-bottom:8px;">Your Allergen Regulations</div>`;
+    html += `<div style="font-weight:600;font-size:14px;margin-bottom:8px;">Allergen Regulations</div>`;
+    if (bd.allergenRegulation.hasSelections) {
+      html += subScoreBar(bd.allergenRegulation.score, bd.allergenRegulation.weight, "#8b5cf6");
+    }
 
     if (!bd.allergenRegulation.hasSelections) {
       html += `
@@ -243,8 +245,32 @@ function buildDetailsHtml(bd: ScoreBreakdown, country: string): string {
     html += `</div>`;
   }
 
+  html += `
+      <div style="font-weight:600;font-size:14px;margin-bottom:8px;">Anaphylaxis Severity</div>
+      ${subScoreBar(bd.anaphylaxis.score, bd.anaphylaxis.weight, "#6366f1")}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;font-size:12px;margin-bottom:20px;">
+        <div style="color:#6b7280;">Severe anaphylaxis</div><div style="font-weight:500;">${bd.anaphylaxis.severeAnaphylaxisPct}%</div>
+        <div style="color:#6b7280;">Adrenaline users</div><div style="font-weight:500;">${bd.anaphylaxis.adrenalineUsersPct}%</div>
+        <div style="color:#6b7280;">3+ adrenaline doses</div><div style="font-weight:500;">${bd.anaphylaxis.threeOrMoreAdrenalinePct}%</div>
+      </div>
+  `;
+
   html += `</div>`;
   return html;
+}
+
+const HISTORY_STORAGE_KEY = "allergy-map-history";
+const MAX_HISTORY = 20;
+
+interface HistoryEntry {
+  id: string;
+  country: string;
+  region: string;
+  lat: number;
+  lng: number;
+  score: number;
+  riskLevel: string;
+  timestamp: number;
 }
 
 interface DetailsState {
@@ -258,9 +284,22 @@ declare global {
   }
 }
 
+function loadHistoryFromStorage(): HistoryEntry[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(HISTORY_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as HistoryEntry[];
+    return Array.isArray(parsed) ? parsed.slice(0, MAX_HISTORY) : [];
+  } catch {
+    return [];
+  }
+}
+
 function MapContent() {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<L.Map | null>(null);
+  const leafletRef = useRef<typeof import("leaflet") | null>(null);
   const searchParams = useSearchParams();
   const query = searchParams.get("q");
   const { factorCost } = useCost();
@@ -270,6 +309,7 @@ function MapContent() {
   const [details, setDetails] = useState<DetailsState | null>(null);
   const pendingDetailsRef = useRef<{ region: string; country: string; clickX: number } | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const [history, setHistory] = useState<HistoryEntry[]>(loadHistoryFromStorage);
 
   useEffect(() => {
     factorCostRef.current = factorCost;
@@ -296,6 +336,63 @@ function MapContent() {
   }, [showDetails]);
 
   useEffect(() => {
+    try {
+      localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history));
+    } catch {
+      // ignore
+    }
+  }, [history]);
+
+  const loadFromHistory = useCallback((entry: HistoryEntry) => {
+    const L = leafletRef.current;
+    if (!L || !mapInstance.current) return;
+    setDetails(null);
+    mapInstance.current.flyTo([entry.lat, entry.lng], 8);
+    pendingDetailsRef.current = {
+      region: entry.region,
+      country: entry.country,
+      clickX: typeof window !== "undefined" ? window.innerWidth / 2 : 0,
+    };
+    const allergenNames = Object.keys(selectedAllergiesRef.current);
+    const regionScore = getScoreForRegion(
+      entry.region,
+      factorCostRef.current,
+      entry.country,
+      allergenNames
+    );
+    const color = scoreToColor(regionScore?.riskLevel ?? entry.riskLevel);
+    const label = riskLabel(regionScore?.riskLevel ?? entry.riskLevel);
+    const score = regionScore?.score ?? entry.score;
+    const popupHtml = regionScore
+      ? `
+        <div style="min-width:180px;font-family:system-ui,sans-serif;">
+          <div style="font-weight:600;font-size:14px;margin-bottom:6px;">${entry.country}</div>
+          <div style="font-size:12px;color:#6b7280;margin-bottom:8px;">Region: ${entry.region}</div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+            <div style="width:14px;height:14px;border-radius:50%;background:${color};flex-shrink:0;"></div>
+            <span style="font-weight:600;font-size:14px;">${label}</span>
+          </div>
+          <div style="font-size:24px;font-weight:700;color:${color};">${score.toFixed(1)}<span style="font-size:14px;color:#9ca3af;">/100</span></div>
+          <div style="margin-top:6px;font-size:11px;color:#9ca3af;">Allergy Readiness Score</div>
+          <a href="#" onclick="window.__showScoreDetails?.(); return false;"
+             style="display:inline-block;margin-top:10px;font-size:12px;color:#3b82f6;text-decoration:none;font-weight:500;">
+            View details &rarr;
+          </a>
+        </div>
+      `
+      : `
+        <div style="min-width:140px;font-family:system-ui,sans-serif;">
+          <div style="font-weight:600;font-size:14px;margin-bottom:4px;">${entry.country}</div>
+          <div style="font-size:12px;color:#9ca3af;">No readiness data available for this region.</div>
+        </div>
+      `;
+    L.popup()
+      .setLatLng([entry.lat, entry.lng])
+      .setContent(popupHtml)
+      .openOn(mapInstance.current);
+  }, []);
+
+  useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setDetails(null);
     };
@@ -308,6 +405,7 @@ function MapContent() {
 
     import("leaflet").then((L) => {
       import("leaflet/dist/leaflet.css");
+      leafletRef.current = L;
 
       if (!mapRef.current) return;
 
@@ -347,6 +445,22 @@ function MapContent() {
             pendingDetailsRef.current = region
               ? { region, country, clickX }
               : null;
+
+            if (region && regionScore) {
+              const newEntry: HistoryEntry = {
+                id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+                country,
+                region,
+                lat,
+                lng,
+                score: regionScore.score,
+                riskLevel: regionScore.riskLevel,
+                timestamp: Date.now(),
+              };
+              setHistory((prev) =>
+                [newEntry, ...prev.filter((e) => e.country !== country)].slice(0, MAX_HISTORY)
+              );
+            }
 
             let popupHtml: string;
 
@@ -390,6 +504,7 @@ function MapContent() {
     return () => {
       mapInstance.current?.remove();
       mapInstance.current = null;
+      leafletRef.current = null;
     };
   }, []);
 
@@ -451,31 +566,82 @@ function MapContent() {
 
     scored.sort((a, b) => b.score - a.score);
 
-    const seen = new Set<string>();
-    const unique: typeof scored = [];
+    const topScores = new Set<number>();
     for (const s of scored) {
-      const key = `${s.region}-${s.score}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        unique.push(s);
-      }
-      if (unique.length >= 5) break;
+      topScores.add(s.score);
+      if (topScores.size >= 5) break;
     }
 
-    return unique;
+    return scored.filter((s) => topScores.has(s.score)).slice(0, 20);
   }, [factorCost, allergenNames]);
 
   return (
-    <div className="flex-1 flex flex-col items-center p-6 relative">
-      <div
-        ref={mapRef}
-        id="heat-map-container"
-        className="w-full max-w-[1000px] min-h-[500px] rounded-lg"
-      />
+    <div className="flex-1 flex flex-row p-6 gap-4 relative">
+      <aside className="w-[220px] flex-shrink-0 flex flex-col border border-gray-200 rounded-lg bg-white overflow-hidden">
+        <div className="px-3 py-2.5 border-b border-gray-200 bg-gray-50">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-gray-900">History</h2>
+            {history.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setHistory([])}
+                className="text-xs text-gray-500 hover:text-gray-700 underline"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          <p className="text-xs text-gray-500 mt-0.5">Load without API</p>
+        </div>
+        <ul className="flex-1 overflow-y-auto p-2 min-h-0">
+          {history.length === 0 ? (
+            <li className="text-xs text-gray-400 py-4 px-2 text-center">
+              Click the map to add locations
+            </li>
+          ) : (
+            history.map((entry) => (
+              <li key={entry.id}>
+                <button
+                  type="button"
+                  onClick={() => loadFromHistory(entry)}
+                  className="w-full text-left px-2.5 py-2 rounded-md hover:bg-gray-100 transition-colors border-b border-gray-100 last:border-0"
+                >
+                  <div className="font-medium text-gray-900 text-sm truncate" title={entry.country}>
+                    {entry.country}
+                  </div>
+                  <div className="flex items-center justify-between gap-1 mt-0.5">
+                    <span className="text-xs text-gray-500 truncate">{entry.region}</span>
+                    <span
+                      className="text-xs font-semibold flex-shrink-0"
+                      style={{
+                        color:
+                          entry.riskLevel === "low"
+                            ? "#22c55e"
+                            : entry.riskLevel === "moderate"
+                              ? "#f59e0b"
+                              : "#ef4444",
+                      }}
+                    >
+                      {entry.score.toFixed(1)}
+                    </span>
+                  </div>
+                </button>
+              </li>
+            ))
+          )}
+        </ul>
+      </aside>
 
-      <div className="w-full max-w-[1000px] mt-6">
+      <div className="flex flex-col items-center flex-1 min-w-0">
+        <div
+          ref={mapRef}
+          id="heat-map-container"
+          className="w-full max-w-[1000px] min-h-[500px] rounded-lg"
+        />
+
+        <div className="w-full max-w-[1000px] mt-6">
         <h2 className="text-sm font-semibold text-gray-900 mb-3">
-          Top 5 Safest Countries
+          Top 20 Safest Countries
           {allergenNames.length > 0 && (
             <span className="text-gray-400 font-normal ml-1">
               for your allergens
@@ -523,6 +689,7 @@ function MapContent() {
             </tbody>
           </table>
         </div>
+      </div>
       </div>
 
       {details && (

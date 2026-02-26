@@ -35,3 +35,21 @@ export function getNormalizedCost(region: string): number | undefined {
   if (!entry) return undefined;
   return (entry.totalCost / maxCost) * 100;
 }
+
+const usaCost =
+  healthcareCost.find((d) => d.region === "North America")?.totalCost ?? maxCost;
+const MAX_COST_BONUS_POINTS = 20;
+
+/** Bonus points when region is cheaper than USA; 0 for USA or costlier. */
+export function getCostBonusPoints(region: string): number {
+  const entry = healthcareCost.find(
+    (d) => d.region.toLowerCase() === region.toLowerCase()
+  );
+  if (!entry || entry.totalCost >= usaCost) return 0;
+  const ratio = (usaCost - entry.totalCost) / usaCost;
+  return Math.round(ratio * MAX_COST_BONUS_POINTS * 10) / 10;
+}
+
+export function getUSACost(): number {
+  return usaCost;
+}
