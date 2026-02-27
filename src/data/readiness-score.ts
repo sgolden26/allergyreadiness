@@ -4,6 +4,7 @@ import { getNormalizedCost, getCostBonusPoints, getUSACost, healthcareCost } fro
 import { isCodexMember } from "./codex-alimentarius";
 import { getLabelingCompliance, type LabelingComplianceData } from "./labeling-compliance-latam";
 import { getAllergenCoverage } from "./allergen-regulations";
+import { getRegionRiskForUser, type RegionAllergenRisk } from "./ingredient-nlp";
 
 export interface RegionScore {
   region: string;
@@ -59,6 +60,15 @@ export interface ScoreBreakdown {
     weight: number;
     hasSelections: boolean;
   };
+  cuisinePrevalence?: {
+    overallPrevalencePct: number;
+    adjustment: number;
+    risks: {
+      allergen: string;
+      recipesContaining: number;
+      prevalencePct: number;
+    }[];
+  };
 }
 
 const failureLookup: Record<string, number> = {};
@@ -78,6 +88,32 @@ const WEIGHT_ALLERGEN = 0.15;
 const WEIGHT_ANAPHYLAXIS = 0.10;
 
 const ALLERGEN_UNREGULATED_PENALTY_PER = 20; // per unregulated allergen, subtracted from 0–100 allergen score
+
+function computeCuisinePrevalenceAdjustment(
+  region: string,
+  selectedAllergens: string[]
+): { adjustment: number; risk?: RegionAllergenRisk } {
+  if (!selectedAllergens.length) return { adjustment: 0 };
+  const risk = getRegionRiskForUser(region, selectedAllergens);
+  if (!risk) return { adjustment: 0 };
+
+  const p = risk.overallPrevalencePct;
+  let adjustment = 0;
+
+  // Step 7 suggested ranges:
+  //   - 80%+ -> -10 to -15 pts
+  //   - 50–80% -> -5 to -10 pts
+  //   - below 30% -> +3 to +5 pts
+  if (p >= 80) {
+    adjustment = -12;
+  } else if (p >= 50) {
+    adjustment = -8;
+  } else if (p < 30) {
+    adjustment = 4;
+  }
+
+  return { adjustment, risk };
+}
 
 function getLabelingScore(country: string | undefined): number {
   if (!country) return 70;
@@ -136,6 +172,10 @@ function computeComponents(
     allergenScore * WEIGHT_ALLERGEN +
     anaphylaxisScore * WEIGHT_ANAPHYLAXIS;
 
+  const { adjustment: cuisineAdjustment, risk: cuisineRisk } =
+    computeCuisinePrevalenceAdjustment(data.region, selectedAllergens);
+  combined += cuisineAdjustment;
+
   let costScore: number | undefined;
   let costWeight: number | undefined;
   let normalizedCost: number | undefined;
@@ -159,6 +199,9 @@ function computeComponents(
     allergenScore,
     allergenWeight: WEIGHT_ALLERGEN,
     avgFailure,
+    cuisineAdjustment,
+    cuisinePrevalencePct: cuisineRisk?.overallPrevalencePct,
+    cuisineRisks: cuisineRisk?.risks ?? [],
     costScore,
     costWeight,
     normalizedCost,
@@ -278,6 +321,14 @@ export function getScoreBreakdown(
       score: comp.allergenScore,
       weight: WEIGHT_ALLERGEN,
       hasSelections: selectedAllergens.length > 0,
+    };
+  }
+
+  if (comp.cuisinePrevalencePct !== undefined && selectedAllergens.length > 0) {
+    breakdown.cuisinePrevalence = {
+      overallPrevalencePct: Math.round((comp.cuisinePrevalencePct ?? 0) * 10) / 10,
+      adjustment: Math.round((comp.cuisineAdjustment ?? 0) * 10) / 10,
+      risks: (comp.cuisineRisks ?? []).map((r) => ({ ...r })),
     };
   }
 

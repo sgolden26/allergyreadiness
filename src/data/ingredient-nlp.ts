@@ -13,38 +13,101 @@ const allergenKeywords: Record<string, string[]> = {
   "Milk": [
     // TODO: add keywords that indicate milk-based ingredients
     // e.g., "milk", "butter", "cream", "cheese", "yogurt", ...
+    "milk",
+    "butter",
+    "cream",
+    "cheese",
+    "yogurt",
+    "ghee",
+    "mozzarella",
+    "parmesan",
+    "奶",
   ],
   "Eggs": [
     // TODO: add keywords
     // e.g., "egg", ...
+    "egg",
+    "egg_yolk",
+    "egg_white",
+    "omelette",
+    "scrambled_egg",
+    "tamago",
   ],
   "Fish": [
     // TODO: add keywords for fish ingredients
     // Hint: look at the CSV for specific fish names
+    "fish",
+    "salmon",
+    "tuna",
+    "cod",
+    "mackerel",
+    "anchovy",
+    "sardine",
+    "trout",
   ],
   "Crustacean Shellfish": [
     // TODO: add keywords
     // e.g., "shrimp", "crab", "lobster", ...
+    "shrimp",
+    "prawn",
+    "crab",
+    "lobster",
+    "crayfish",
+    "scampi",
   ],
   "Tree Nuts": [
     // TODO: add keywords
     // e.g., "almond", "walnut", "cashew", "pistachio", ...
+    "almond",
+    "walnut",
+    "cashew",
+    "pistachio",
+    "hazelnut",
+    "pecan",
+    "macadamia",
+    "brazil_nut",
+    "pine_nut",
+    "nut",
   ],
   "Peanuts": [
     // TODO: add keywords
     // e.g., "peanut", ...
+    "peanut",
+    "peanut_butter",
+    "groundnut",
+    "satay_peanut_sauce",
   ],
   "Wheat": [
     // TODO: add keywords
     // e.g., "wheat", "bread", "flour", ...
+    "wheat",
+    "bread",
+    "flour",
+    "noodle",
+    "pasta",
+    "udon",
+    "ramen",
+    "semolina",
   ],
   "Soybeans": [
     // TODO: add keywords
     // e.g., "soy_sauce", "soybean", "tofu", "miso", ...
+    "soy",
+    "soybean",
+    "soy_sauce",
+    "tofu",
+    "miso",
+    "edamame",
+    "tempeh",
   ],
   "Sesame": [
     // TODO: add keywords
     // e.g., "sesame", "tahini", ...
+    "sesame",
+    "sesame_seed",
+    "sesame_oil",
+    "tahini",
+    "gomashio",
   ],
 };
 
@@ -62,7 +125,29 @@ function parseCSV(csvText: string): Recipe[] {
   // First element is the region, rest are ingredients.
   //
   // return recipes;
-  return [];
+  const recipes: Recipe[] = [];
+
+  const lines = csvText.split(/\r?\n/);
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+
+    const parts = line.split(",");
+    if (parts.length < 2) continue;
+
+    const region = parts[0].trim();
+    const ingredients = parts
+      .slice(1)
+      .map((v) => v.trim())
+      .filter((v) => v.length > 0)
+      .map((v) => v.toLowerCase());
+
+    if (!region || ingredients.length === 0) continue;
+
+    recipes.push({ region, ingredients });
+  }
+
+  return recipes;
 }
 
 // ─── STEP 3: Check if an ingredient matches an allergen ─────────────
@@ -79,7 +164,11 @@ function ingredientMatchesAllergen(
   // (e.g., "peanut_butter" should match "peanut").
   //
   // return true/false;
-  return false;
+  const keywords = allergenKeywords[allergen] ?? [];
+  if (!keywords.length) return false;
+
+  const lower = ingredient.toLowerCase();
+  return keywords.some((kw) => lower.includes(kw.toLowerCase()));
 }
 
 // ─── STEP 4: Compute allergen frequency per region ──────────────────
@@ -101,7 +190,41 @@ function computeFrequencies(recipes: Recipe[]): AllergenFrequency[] {
   // 4. Count matches and compute percentage
   //
   // return array of AllergenFrequency objects;
-  return [];
+  const byRegion = new Map<string, Recipe[]>();
+
+  for (const recipe of recipes) {
+    if (!byRegion.has(recipe.region)) {
+      byRegion.set(recipe.region, []);
+    }
+    byRegion.get(recipe.region)!.push(recipe);
+  }
+
+  const result: AllergenFrequency[] = [];
+
+  for (const [region, regionRecipes] of byRegion.entries()) {
+    const totalRecipes = regionRecipes.length;
+    const allergenStats: Record<string, { count: number; pct: number }> = {};
+
+    for (const allergen of Object.keys(allergenKeywords)) {
+      let count = 0;
+      for (const recipe of regionRecipes) {
+        const hasAllergen = recipe.ingredients.some((ing) =>
+          ingredientMatchesAllergen(ing, allergen)
+        );
+        if (hasAllergen) count += 1;
+      }
+      const pct = totalRecipes > 0 ? (count / totalRecipes) * 100 : 0;
+      allergenStats[allergen] = { count, pct };
+    }
+
+    result.push({
+      region,
+      totalRecipes,
+      allergens: allergenStats,
+    });
+  }
+
+  return result;
 }
 
 // ─── STEP 5: Risk assessment for a user's selected allergens ────────
@@ -134,7 +257,46 @@ export function getRegionAllergenRisk(
   //      or approximate by using the max single-allergen prevalence.
   //
   // return risk object;
-  return undefined;
+  const freq = frequencies.find((f) => f.region === region);
+  if (!freq) return undefined;
+
+  const risks: {
+    allergen: string;
+    recipesContaining: number;
+    prevalencePct: number;
+  }[] = [];
+
+  for (const allergen of selectedAllergens) {
+    const stats = freq.allergens[allergen];
+    if (!stats) continue;
+    risks.push({
+      allergen,
+      recipesContaining: stats.count,
+      prevalencePct: stats.pct,
+    });
+  }
+
+  if (!risks.length) {
+    return {
+      region,
+      totalRecipes: freq.totalRecipes,
+      risks: [],
+      overallPrevalencePct: 0,
+    };
+  }
+
+  // Approximate overall prevalence by the maximum single-allergen prevalence.
+  const overallPrevalencePct = risks.reduce(
+    (max, r) => (r.prevalencePct > max ? r.prevalencePct : max),
+    0
+  );
+
+  return {
+    region,
+    totalRecipes: freq.totalRecipes,
+    risks,
+    overallPrevalencePct,
+  };
 }
 
 // ─── STEP 6: Integration point ──────────────────────────────────────
@@ -152,8 +314,11 @@ export async function loadIngredientData(): Promise<AllergenFrequency[]> {
   // const recipes = parseCSV(csvText);
   // cachedFrequencies = computeFrequencies(recipes);
   // return cachedFrequencies;
-
-  return [];
+  const response = await fetch("/data/region-ingredients.csv");
+  const csvText = await response.text();
+  const recipes = parseCSV(csvText);
+  cachedFrequencies = computeFrequencies(recipes);
+  return cachedFrequencies;
 }
 
 export function getRegionRiskForUser(
